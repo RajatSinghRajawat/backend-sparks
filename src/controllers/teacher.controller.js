@@ -6,7 +6,8 @@ const Playlist = require("../models/playlist.model");
 const Course = require("../models/course.model");
 const Video = require("../models/video.model");
 const PlaylistEnrollment = require("../models/playlistEnrollment.model");
-const { getPresignedViewUrl } = require("../config/s3");
+const { getPresignedViewUrl, signStoredUrl } = require("../config/s3");
+const { hideLockedVideoUrls } = require("../utils/courseAccess");
 
 // ─── Helper: Add presigned view URLs to a reel object ───
 const addPresignedUrlsToReel = async (reel) => {
@@ -135,7 +136,7 @@ const getTeacherById = async (req, res) => {
       _id: teacher._id,
       name: teacher.name,
       email: teacher.email || null,
-      avatar: teacher.avatar || null,
+      avatar: await signStoredUrl(teacher.avatar),
       totalCourses,
       totalEnrolledStudents,
       totalFollowers: followersCount,
@@ -156,7 +157,7 @@ const getTeacherById = async (req, res) => {
           totalPages,
           hasMore: page < totalPages,
         },
-        courses: coursesWithUrls,
+        courses: req.user?.id ? await hideLockedVideoUrls(coursesWithUrls, req.user.id) : coursesWithUrls,
         videos: videosWithUrls,
       },
     });

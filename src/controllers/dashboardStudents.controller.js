@@ -6,7 +6,15 @@
  */
 
 const Student = require("../models/student.model");
+const PlaylistEnrollment = require("../models/playlistEnrollment.model");
+const ReelSave = require("../models/reelSave.model");
+const ReelLike = require("../models/reelLike.model");
+const Follow = require("../models/follow.model");
+const Result = require("../models/result.model");
+const Course = require("../models/course.model");
 const mongoose = require("mongoose");
+const { escapeRegex } = require("../utils/escapeRegex");
+const { signStoredUrl, getPresignedViewUrl } = require("../config/s3");
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -30,9 +38,9 @@ const getStudentList = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        ...(search.match(/^\d+$/) ? [{ phone: { $regex: search, $options: "i" } }] : []),
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { email: { $regex: escapeRegex(search), $options: "i" } },
+        ...(search.match(/^\d+$/) ? [{ phone: { $regex: escapeRegex(search), $options: "i" } }] : []),
       ];
     }
 
@@ -97,6 +105,15 @@ const getStudentById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Student not found." });
     }
 
+    // Activity summary for the admin profile view.
+    const [enrollments, savedReels, likedReels, following, testsAttempted] = await Promise.all([
+      PlaylistEnrollment.find({ student: studentId }).populate("playlist", "name").lean(),
+      ReelSave.countDocuments({ savedBy: studentId }),
+      ReelLike.countDocuments({ likedBy: studentId }),
+      Follow.countDocuments({ followedBy: studentId }),
+      Result.countDocuments({ student: studentId, "answers.0": { $exists: true } }),
+    ]);
+
     res.status(200).json({
       success: true,
       data: {
@@ -107,10 +124,20 @@ const getStudentById = async (req, res) => {
           phone: student.phone || null,
           isActive: !!student.isActive,
           isVerified: !!student.isVerified,
-          avatar: student.avatar || null,
+          avatar: await signStoredUrl(student.avatar),
           createdAt: student.createdAt,
           updatedAt: student.updatedAt,
         },
+        stats: {
+          enrolledPlaylists: enrollments.length,
+          savedReels,
+          likedReels,
+          following,
+          testsAttempted,
+        },
+        enrolledPlaylists: enrollments
+          .filter((e) => e.playlist)
+          .map((e) => ({ _id: e.playlist._id.toString(), name: e.playlist.name })),
       },
     });
   } catch (error) {
@@ -173,4 +200,142 @@ const updateStudent = async (req, res) => {
   }
 };
 
-module.exports = { getStudentList, getStudentById, updateStudent };
+// Signed GET URL for a private S3 object; null when missing or unsignable.
+const signKey = async (key) => {
+  if (!key) return null;
+  try {
+    return await getPresignedViewUrl(key, 3600);
+  } catch {
+    return null;
+  }
+};
+
+const ACTIVITY_LIMIT = 100;
+
+// ─────────────────────────────────────────────
+// @desc    What a student has done in the app, for the admin profile page
+// @route   GET /api/admin/dashboard/students/:studentId/activity
+// @access  Private (Admin)
+// ─────────────────────────────────────────────
+const getStudentActivity = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    if (!studentId || !mongoose.isValidObjectId(studentId)) {
+      return res.status(400).json({ success: false, message: "Valid student ID is required." });
+    }
+    if (!(await Student.exists({ _id: studentId }))) {
+      return res.status(404).json({ success: false, message: "Student not found." });
+    }
+
+    const reelPopulate = {
+      path: "reel",
+      select: "title video thumbnail duration views likes createdBy",
+      populate: { path: "createdBy", select: "name" },
+    };
+    const [enrollments, saves, likes, follows, results] = await Promise.all([
+      PlaylistEnrollment.find({ student: studentId })
+        .populate({ path: "playlist", select: "name description banner createdBy", populate: { path: "createdBy", select: "name" } })
+        .sort({ createdAt: -1 })
+        .limit(ACTIVITY_LIMIT)
+        .lean(),
+      ReelSave.find({ savedBy: studentId }).populate(reelPopulate).sort({ createdAt: -1 }).limit(ACTIVITY_LIMIT).lean(),
+      ReelLike.find({ likedBy: studentId }).populate(reelPopulate).sort({ createdAt: -1 }).limit(ACTIVITY_LIMIT).lean(),
+      Follow.find({ followedBy: studentId }).populate("teacher", "name email avatar").sort({ createdAt: -1 }).limit(ACTIVITY_LIMIT).lean(),
+      Result.find({ student: studentId })
+        .populate("test", "title questions startTime endTime")
+        .sort({ startedAt: -1 })
+        .limit(ACTIVITY_LIMIT)
+        .lean(),
+    ]);
+
+    const playlistIds = enrollments.filter((e) => e.playlist).map((e) => e.playlist._id);
+    const courseCounts = await Course.aggregate([
+      { $match: { playlist: { $in: playlistIds }, isActive: true } },
+      { $group: { _id: "$playlist", n: { $sum: 1 } } },
+    ]);
+    const coursesPer = Object.fromEntries(courseCounts.map((r) => [String(r._id), r.n]));
+
+    const mapReel = async (row) => {
+      const r = row.reel;
+      if (!r) return null; // reel deleted since
+      return {
+        _id: r._id.toString(),
+        title: r.title,
+        teacherName: r.createdBy?.name ?? "Admin",
+        duration: r.duration || 0,
+        views: r.views || 0,
+        likes: r.likes || 0,
+        thumbnail: await signKey(r.thumbnail?.key),
+        videoUrl: await signKey(r.video?.key),
+        at: row.createdAt,
+      };
+    };
+    const clean = (arr) => arr.filter(Boolean);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        enrolledPlaylists: clean(
+          await Promise.all(
+            enrollments.map(async (e) =>
+              e.playlist
+                ? {
+                    _id: e.playlist._id.toString(),
+                    name: e.playlist.name,
+                    description: e.playlist.description || "",
+                    teacherName: e.playlist.createdBy?.name ?? "Admin",
+                    banner: await signKey(e.playlist.banner?.key),
+                    videoCount: coursesPer[String(e.playlist._id)] ?? 0,
+                    enrolledAt: e.createdAt,
+                  }
+                : null
+            )
+          )
+        ),
+        savedReels: clean(await Promise.all(saves.map(mapReel))),
+        likedReels: clean(await Promise.all(likes.map(mapReel))),
+        following: clean(
+          await Promise.all(
+            follows.map(async (f) =>
+              f.teacher
+                ? {
+                    _id: f.teacher._id.toString(),
+                    name: f.teacher.name,
+                    email: f.teacher.email,
+                    avatar: await signStoredUrl(f.teacher.avatar),
+                    followedAt: f.createdAt,
+                  }
+                : null
+            )
+          )
+        ),
+        testResults: results.map((r) => {
+          const answered = r.answers?.length ?? 0;
+          const correct = (r.answers ?? []).filter((a) => a.isCorrect).length;
+          const total = r.test?.questions?.length ?? answered;
+          return {
+            _id: r._id.toString(),
+            testId: r.test?._id?.toString() ?? null,
+            testTitle: r.test?.title ?? "Deleted test",
+            totalQuestions: total,
+            answered,
+            correct,
+            scorePercent: total > 0 ? Math.round((correct / total) * 100) : 0,
+            completed: !!r.completedAt,
+            startedAt: r.startedAt,
+            completedAt: r.completedAt,
+          };
+        }),
+      },
+    });
+  } catch (error) {
+    console.error("Dashboard getStudentActivity Error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load student activity.",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+module.exports = { getStudentList, getStudentById, updateStudent, getStudentActivity };

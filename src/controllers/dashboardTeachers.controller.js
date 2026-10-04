@@ -6,7 +6,16 @@
  */
 
 const Teacher = require("../models/teacher.model");
+const Playlist = require("../models/playlist.model");
+const Course = require("../models/course.model");
+const Reel = require("../models/reel.model");
+const Video = require("../models/video.model");
+const Category = require("../models/category.model");
+const Follow = require("../models/follow.model");
+const PlaylistEnrollment = require("../models/playlistEnrollment.model");
 const mongoose = require("mongoose");
+const { escapeRegex } = require("../utils/escapeRegex");
+const { signStoredUrl, getPresignedViewUrl } = require("../config/s3");
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -30,9 +39,9 @@ const getTeacherList = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { email: { $regex: escapeRegex(search), $options: "i" } },
+        { phone: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -97,6 +106,20 @@ const getTeacherById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Teacher not found." });
     }
 
+    // Activity summary for the admin profile view.
+    const [playlists, courses, videos, reels, categories, followers, reelViewsAgg] = await Promise.all([
+      Playlist.countDocuments({ createdBy: teacherId }),
+      Course.countDocuments({ createdBy: teacherId, isActive: true }),
+      Video.countDocuments({ createdBy: teacherId, isActive: true }),
+      Reel.countDocuments({ createdBy: teacherId, isActive: true }),
+      Category.countDocuments({ createdBy: teacherId }),
+      Follow.countDocuments({ teacher: teacherId }),
+      Reel.aggregate([
+        { $match: { createdBy: new mongoose.Types.ObjectId(teacherId), isActive: true } },
+        { $group: { _id: null, views: { $sum: "$views" }, likes: { $sum: "$likes" } } },
+      ]),
+    ]);
+
     res.status(200).json({
       success: true,
       data: {
@@ -107,9 +130,19 @@ const getTeacherById = async (req, res) => {
           phone: teacher.phone,
           isActive: !!teacher.isActive,
           isVerified: !!teacher.isVerified,
-          avatar: teacher.avatar || null,
+          avatar: await signStoredUrl(teacher.avatar),
           createdAt: teacher.createdAt,
           updatedAt: teacher.updatedAt,
+        },
+        stats: {
+          playlists,
+          courses,
+          videos,
+          reels,
+          categories,
+          followers,
+          reelViews: reelViewsAgg[0]?.views ?? 0,
+          reelLikes: reelViewsAgg[0]?.likes ?? 0,
         },
       },
     });
@@ -173,4 +206,144 @@ const updateTeacher = async (req, res) => {
   }
 };
 
-module.exports = { getTeacherList, getTeacherById, updateTeacher };
+// Signed GET URL for a private S3 object; null when missing or unsignable.
+const signKey = async (key) => {
+  if (!key) return null;
+  try {
+    return await getPresignedViewUrl(key, 3600);
+  } catch {
+    return null;
+  }
+};
+
+const CONTENT_LIMIT = 100;
+
+// ─────────────────────────────────────────────
+// @desc    Everything a teacher has published, for the admin profile page
+// @route   GET /api/admin/dashboard/teachers/:teacherId/content
+// @access  Private (Admin)
+// ─────────────────────────────────────────────
+const getTeacherContent = async (req, res) => {
+  try {
+    const { teacherId } = req.params;
+    if (!teacherId || !mongoose.isValidObjectId(teacherId)) {
+      return res.status(400).json({ success: false, message: "Valid teacher ID is required." });
+    }
+    if (!(await Teacher.exists({ _id: teacherId }))) {
+      return res.status(404).json({ success: false, message: "Teacher not found." });
+    }
+
+    const [reels, courses, videos, playlists, categories] = await Promise.all([
+      Reel.find({ createdBy: teacherId })
+        .populate("category", "name")
+        .sort({ createdAt: -1 })
+        .limit(CONTENT_LIMIT)
+        .select("title description video thumbnail category hashtags duration views likes isActive createdAt")
+        .lean(),
+      Course.find({ createdBy: teacherId })
+        .populate("playlist", "name")
+        .sort({ createdAt: -1 })
+        .limit(CONTENT_LIMIT)
+        .select("title description video thumbnail playlist duration isActive createdAt")
+        .lean(),
+      Video.find({ createdBy: teacherId })
+        .sort({ createdAt: -1 })
+        .limit(CONTENT_LIMIT)
+        .select("title description video thumbnail duration isActive createdAt")
+        .lean(),
+      Playlist.find({ createdBy: teacherId })
+        .sort({ createdAt: -1 })
+        .limit(CONTENT_LIMIT)
+        .select("name description banner isActive createdAt")
+        .lean(),
+      Category.find({ createdBy: teacherId }).sort({ name: 1 }).select("name createdAt").lean(),
+    ]);
+
+    // Per-playlist video and enrolment counts in two grouped queries.
+    const playlistIds = playlists.map((p) => p._id);
+    const [courseCounts, enrollCounts] = await Promise.all([
+      Course.aggregate([
+        { $match: { playlist: { $in: playlistIds }, isActive: true } },
+        { $group: { _id: "$playlist", n: { $sum: 1 } } },
+      ]),
+      PlaylistEnrollment.aggregate([
+        { $match: { playlist: { $in: playlistIds } } },
+        { $group: { _id: "$playlist", n: { $sum: 1 } } },
+      ]),
+    ]);
+    const countBy = (rows) => Object.fromEntries(rows.map((r) => [String(r._id), r.n]));
+    const coursesPer = countBy(courseCounts);
+    const enrollPer = countBy(enrollCounts);
+
+    const media = async (doc) => ({
+      thumbnail: await signKey(doc.thumbnail?.key),
+      videoUrl: await signKey(doc.video?.key),
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        reels: await Promise.all(
+          reels.map(async (r) => ({
+            _id: r._id.toString(),
+            title: r.title,
+            description: r.description || "",
+            category: r.category?.name ?? null,
+            hashtags: r.hashtags ?? [],
+            duration: r.duration || 0,
+            views: r.views || 0,
+            likes: r.likes || 0,
+            isActive: r.isActive !== false,
+            createdAt: r.createdAt,
+            ...(await media(r)),
+          }))
+        ),
+        courses: await Promise.all(
+          courses.map(async (c) => ({
+            _id: c._id.toString(),
+            title: c.title,
+            description: c.description || "",
+            playlist: c.playlist ? { _id: c.playlist._id.toString(), name: c.playlist.name } : null,
+            duration: c.duration || 0,
+            isActive: c.isActive !== false,
+            createdAt: c.createdAt,
+            ...(await media(c)),
+          }))
+        ),
+        videos: await Promise.all(
+          videos.map(async (v) => ({
+            _id: v._id.toString(),
+            title: v.title,
+            description: v.description || "",
+            duration: v.duration || 0,
+            isActive: v.isActive !== false,
+            createdAt: v.createdAt,
+            ...(await media(v)),
+          }))
+        ),
+        playlists: await Promise.all(
+          playlists.map(async (p) => ({
+            _id: p._id.toString(),
+            name: p.name,
+            description: p.description || "",
+            banner: await signKey(p.banner?.key),
+            videoCount: coursesPer[String(p._id)] ?? 0,
+            enrolledCount: enrollPer[String(p._id)] ?? 0,
+            isActive: p.isActive !== false,
+            createdAt: p.createdAt,
+          }))
+        ),
+        categories: categories.map((c) => ({ _id: c._id.toString(), name: c.name })),
+      },
+    });
+  } catch (error) {
+    console.error("Dashboard getTeacherContent Error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load teacher content.",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+module.exports = { getTeacherList, getTeacherById, updateTeacher, getTeacherContent };

@@ -23,10 +23,10 @@ const sendOTPEmail = async (email, otp, purpose = "register") => {
   const transporter = createTransporter();
 
   const subjectMap = {
-    register: "EduSpark - Verify Your Email for Registration",
-    student_register: "EduSpark - Verify Your Email (Student Registration)",
-    "reset-password": "EduSpark - Password Reset OTP",
-    "verify-email": "EduSpark - Email Verification OTP",
+    register: "Sparks - Verify Your Email for Registration",
+    student_register: "Sparks - Verify Your Email (Student Registration)",
+    "reset-password": "Sparks - Password Reset OTP",
+    "verify-email": "Sparks - Email Verification OTP",
   };
 
   const htmlTemplate = `
@@ -43,7 +43,7 @@ const sendOTPEmail = async (email, otp, purpose = "register") => {
         <tr>
           <td style="background: linear-gradient(135deg, #0A4D9C 0%, #1a6dd4 100%); padding: 32px 40px; text-align: center;">
             <h1 style="color: #ffffff; margin: 0; font-size: 28px; letter-spacing: 1px;">
-              ⚡ EduSpark
+              ⚡ Sparks
             </h1>
             <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0; font-size: 14px;">
               Teacher Panel
@@ -85,7 +85,7 @@ const sendOTPEmail = async (email, otp, purpose = "register") => {
         <tr>
           <td style="background-color: #f8fafc; padding: 20px 40px; text-align: center; border-top: 1px solid #e2e8f0;">
             <p style="color: #94a3b8; font-size: 12px; margin: 0;">
-              © ${new Date().getFullYear()} EduSpark. All rights reserved.
+              © ${new Date().getFullYear()} Sparks. All rights reserved.
             </p>
           </td>
         </tr>
@@ -95,7 +95,7 @@ const sendOTPEmail = async (email, otp, purpose = "register") => {
   `;
 
   const mailOptions = {
-    from: `"EduSpark" <${process.env.SMTP_EMAIL}>`,
+    from: `"Sparks" <${process.env.SMTP_EMAIL}>`,
     to: email,
     subject: subjectMap[purpose] || subjectMap["register"],
     html: htmlTemplate,

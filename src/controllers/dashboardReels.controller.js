@@ -12,6 +12,18 @@ const Reel = require("../models/reel.model");
 const Category = require("../models/category.model");
 const { getS3Client, getS3Bucket, getS3Url, getPresignedViewUrl } = require("../config/s3");
 const mongoose = require("mongoose");
+const { escapeRegex } = require("../utils/escapeRegex");
+
+// Admin lists show thumbnails and play videos inline; the bucket is private,
+// so hand out signed URLs (null when the object is missing).
+const signKey = async (key) => {
+  if (!key) return null;
+  try {
+    return await getPresignedViewUrl(key, 3600);
+  } catch {
+    return null;
+  }
+};
 
 const MIME_TO_EXT = {
   "video/mp4": ".mp4",
@@ -51,8 +63,8 @@ const getReelList = async (req, res) => {
     const filter = { isActive: true };
     if (search) {
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -63,22 +75,24 @@ const getReelList = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select("title description views likes duration createdBy createdByAdmin createdAt")
+        .select("title description views likes duration video thumbnail createdBy createdByAdmin createdAt")
         .lean(),
       Reel.countDocuments(filter),
     ]);
 
-    const list = reels.map((r) => ({
+    const list = await Promise.all(reels.map(async (r) => ({
       _id: r._id.toString(),
       title: r.title || "",
       description: (r.description || "").slice(0, 100),
       views: r.views || 0,
       likes: r.likes || 0,
       duration: r.duration || 0,
+      thumbnail: await signKey(r.thumbnail?.key),
+      videoUrl: await signKey(r.video?.key),
       teacherName: r.createdBy?.name ?? r.createdByAdmin?.name ?? "Admin",
       teacherEmail: r.createdBy?.email ?? r.createdByAdmin?.email ?? "—",
       createdAt: r.createdAt,
-    }));
+    })));
 
     res.status(200).json({
       success: true,
@@ -114,7 +128,7 @@ const getReelVideoUrl = async (req, res) => {
       return res.status(400).json({ success: false, message: "Valid reel ID is required." });
     }
 
-    const reel = await Reel.findById(reelId).select("title video").lean();
+    const reel = await Reel.findById(reelId).select("title video thumbnail").lean();
     if (!reel) {
       return res.status(404).json({ success: false, message: "Reel not found." });
     }
@@ -131,6 +145,8 @@ const getReelVideoUrl = async (req, res) => {
       data: {
         title: reel.title || "Reel",
         videoUrl,
+        url: videoUrl, // the admin panel reads `url`
+        thumbnailUrl: await signKey(reel.thumbnail?.key),
       },
     });
   } catch (error) {

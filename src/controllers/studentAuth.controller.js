@@ -128,7 +128,7 @@ const verifyOTPAndRegister = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Registration successful! Welcome to EduSpark 🎉",
+      message: "Registration successful! Welcome to Sparks 🎉",
       data: {
         student: {
           _id: student._id,

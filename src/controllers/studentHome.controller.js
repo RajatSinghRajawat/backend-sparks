@@ -12,8 +12,10 @@ const Teacher = require("../models/teacher.model");
 const PlaylistEnrollment = require("../models/playlistEnrollment.model");
 const Follow = require("../models/follow.model");
 const CourseRating = require("../models/courseRating.model");
-const { getPresignedViewUrl } = require("../config/s3");
+const { getPresignedViewUrl, signStoredUrl } = require("../config/s3");
 const mongoose = require("mongoose");
+const { escapeRegex } = require("../utils/escapeRegex");
+const { hideLockedVideoUrls } = require("../utils/courseAccess");
 
 const LIMIT_BANNERS = 20;
 const LIMIT_TOP_TEACHERS = 5;
@@ -54,6 +56,9 @@ const addPresignedBannerUrl = async (playlist) => {
       // keep existing url if any
     }
   }
+  if (obj.createdBy?.avatar) {
+    obj.createdBy = { ...obj.createdBy, avatar: await signStoredUrl(obj.createdBy.avatar) };
+  }
   return obj;
 };
 
@@ -85,10 +90,9 @@ const addPresignedReelUrls = async (reel) => {
     try {
       obj.thumbnail = { ...obj.thumbnail, url: await getPresignedViewUrl(obj.thumbnail.key, 3600) };
     } catch (e) {}
-  } else if (obj.video?.url) {
-    // Admin reels (or any reel) without thumbnail: use video URL so client has something to show
-    obj.thumbnail = { url: obj.video.url, key: obj.thumbnail?.key ?? null };
   }
+  // No thumbnail → leave url null. Clients render a frame from video.url
+  // themselves; an .mp4 URL in thumbnail.url just made <Image> load nothing.
   return obj;
 };
 
@@ -151,17 +155,17 @@ const getStudentHome = async (req, res) => {
       teacherScores.slice(0, LIMIT_TOP_TEACHERS).forEach((t) => {
         scoreById[t.teacherId] = { followersCount: t.followersCount, totalReelViews: t.totalReelViews };
       });
-      topTeachers = topTeacherIds.map((id) => {
+      topTeachers = await Promise.all(topTeacherIds.map(async (id) => {
         const t = byId[id];
         const stats = scoreById[id] || { followersCount: 0, totalReelViews: 0 };
         return {
           _id: id,
           name: t?.name ?? "—",
-          avatar: t?.avatar ?? null,
+          avatar: await signStoredUrl(t?.avatar),
           followersCount: stats.followersCount,
           totalReelViews: stats.totalReelViews,
         };
-      });
+      }));
     }
 
     // ─── 3. Top 5 playlists by enrollment count ───
@@ -285,7 +289,10 @@ const getStudentHome = async (req, res) => {
         .sort({ createdAt: -1 })
         .limit(LIMIT_TOP_LONG_VIDEOS)
         .lean();
-      topLongVideos = await Promise.all(courseDocs.map((c) => addPresignedCourseUrls(c)));
+      topLongVideos = await hideLockedVideoUrls(
+        await Promise.all(courseDocs.map((c) => addPresignedCourseUrls(c))),
+        studentId
+      );
       topLongVideos = topLongVideos.map((c) => ({
         ...c,
         _id: c._id.toString(),
@@ -339,7 +346,7 @@ const getStudentSearch = async (req, res) => {
         data: { teachers: [], reels: [], courses: [], playlists: [] },
       });
     }
-    const regex = { $regex: q, $options: "i" };
+    const regex = { $regex: escapeRegex(q), $options: "i" };
     const limit = Math.min(Number(req.query.limit) || LIMIT_SEARCH_PER_TYPE, 20);
 
     const [teacherDocs, reelDocs, courseDocs, playlistDocs] = await Promise.all([
@@ -382,12 +389,12 @@ const getStudentSearch = async (req, res) => {
         .lean(),
     ]);
 
-    const teachers = teacherDocs.map((t) => ({
+    const teachers = await Promise.all(teacherDocs.map(async (t) => ({
       _id: t._id.toString(),
       name: t.name,
       email: t.email,
-      avatar: t.avatar || null,
-    }));
+      avatar: await signStoredUrl(t.avatar),
+    })));
 
     const reelsWithUrls = await Promise.all(reelDocs.map((r) => addPresignedReelUrls(r)));
     const reels = reelsWithUrls.map((r) => ({
@@ -406,7 +413,10 @@ const getStudentSearch = async (req, res) => {
         : { url: null, key: null },
     }));
 
-    const coursesWithUrls = await Promise.all(courseDocs.map((c) => addPresignedCourseUrls(c)));
+    const coursesWithUrls = await hideLockedVideoUrls(
+      await Promise.all(courseDocs.map((c) => addPresignedCourseUrls(c))),
+      req.user.id
+    );
     const courses = coursesWithUrls.map((c) => ({
       ...c,
       _id: c._id.toString(),

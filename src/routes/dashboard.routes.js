@@ -16,8 +16,8 @@ const {
   getTeacherConversationMessages,
   replyTeacherConversation,
 } = require("../controllers/dashboardSupportChat.controller");
-const { getTeacherList, getTeacherById, updateTeacher } = require("../controllers/dashboardTeachers.controller");
-const { getStudentList, getStudentById, updateStudent } = require("../controllers/dashboardStudents.controller");
+const { getTeacherList, getTeacherById, updateTeacher, getTeacherContent } = require("../controllers/dashboardTeachers.controller");
+const { getStudentList, getStudentById, updateStudent, getStudentActivity } = require("../controllers/dashboardStudents.controller");
 const {
   getCourseList,
   getCourseVideoUrl,
@@ -72,6 +72,8 @@ router.post("/tests", protectAdmin, createTestValidator, validate, createTest);
 router.get("/teachers", protectAdmin, getTeacherList);
 // GET /api/admin/dashboard/teachers/:teacherId (protected)
 router.get("/teachers/:teacherId", protectAdmin, getTeacherById);
+// GET /api/admin/dashboard/teachers/:teacherId/content (protected) – reels, courses, videos, playlists
+router.get("/teachers/:teacherId/content", protectAdmin, getTeacherContent);
 // PATCH /api/admin/dashboard/teachers/:teacherId (protected)
 router.patch("/teachers/:teacherId", protectAdmin, updateTeacher);
 
@@ -79,6 +81,8 @@ router.patch("/teachers/:teacherId", protectAdmin, updateTeacher);
 router.get("/students", protectAdmin, getStudentList);
 // GET /api/admin/dashboard/students/:studentId (protected)
 router.get("/students/:studentId", protectAdmin, getStudentById);
+// GET /api/admin/dashboard/students/:studentId/activity (protected) – enrollments, saves, likes, follows, tests
+router.get("/students/:studentId/activity", protectAdmin, getStudentActivity);
 // PATCH /api/admin/dashboard/students/:studentId (protected)
 router.patch("/students/:studentId", protectAdmin, updateStudent);
 

@@ -1,4 +1,5 @@
 const Category = require("../models/category.model");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 // ─────────────────────────────────────────────
 // @desc    Create a new category
@@ -12,7 +13,7 @@ const createCategory = async (req, res) => {
 
     // Check if this teacher already has a category with the same name
     const existing = await Category.findOne({
-      name: { $regex: new RegExp(`^${name}$`, "i") }, // Case-insensitive check
+      name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") }, // Case-insensitive check
       createdBy: teacherId,
     });
 
@@ -145,7 +146,7 @@ const updateCategory = async (req, res) => {
 
     // Check for duplicate name (case-insensitive)
     const duplicate = await Category.findOne({
-      name: { $regex: new RegExp(`^${name}$`, "i") },
+      name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") },
       createdBy: teacherId,
       _id: { $ne: req.params.id }, // Exclude current category
     });

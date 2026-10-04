@@ -52,7 +52,7 @@ const { protect } = require("../middlewares/auth.middleware");
  *         email:
  *           type: string
  *           format: email
- *           example: teacher@eduspark.com
+ *           example: teacher@sparks.com
  *
  *     VerifyOTPRequest:
  *       type: object
@@ -66,7 +66,7 @@ const { protect } = require("../middlewares/auth.middleware");
  *         email:
  *           type: string
  *           format: email
- *           example: teacher@eduspark.com
+ *           example: teacher@sparks.com
  *         otp:
  *           type: string
  *           minLength: 6
@@ -186,7 +186,7 @@ router.post("/send-otp", sendOTPValidator, validate, sendOTP);
  *                   example: true
  *                 message:
  *                   type: string
- *                   example: "Registration successful! Welcome to EduSpark 🎉"
+ *                   example: "Registration successful! Welcome to Sparks 🎉"
  *                 data:
  *                   type: object
  *                   properties:
@@ -265,7 +265,7 @@ router.post("/resend-otp", sendOTPValidator, validate, resendOTP);
  *               email:
  *                 type: string
  *                 format: email
- *                 example: teacher@eduspark.com
+ *                 example: teacher@sparks.com
  *               password:
  *                 type: string
  *                 example: Teacher@123

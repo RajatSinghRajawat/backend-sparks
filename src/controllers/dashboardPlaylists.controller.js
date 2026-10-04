@@ -12,8 +12,20 @@ const Teacher = require("../models/teacher.model");
 const crypto = require("crypto");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { generateUploadUrl } = require("../helpers/fileHelper");
-const { getS3Client, getS3Bucket, getS3Url } = require("../config/s3");
+const { getS3Client, getS3Bucket, getS3Url, getPresignedViewUrl } = require("../config/s3");
+
+// Admin lists show thumbnails and play videos inline; the bucket is private,
+// so hand out signed URLs (null when the object is missing).
+const signKey = async (key) => {
+  if (!key) return null;
+  try {
+    return await getPresignedViewUrl(key, 3600);
+  } catch {
+    return null;
+  }
+};
 const mongoose = require("mongoose");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const MIME_TO_EXT = {
   "image/jpeg": ".jpg",
@@ -49,8 +61,8 @@ const getPlaylistList = async (req, res) => {
     if (search) {
       andConditions.push({
         $or: [
-          { name: { $regex: search, $options: "i" } },
-          { description: { $regex: search, $options: "i" } },
+          { name: { $regex: escapeRegex(search), $options: "i" } },
+          { description: { $regex: escapeRegex(search), $options: "i" } },
         ],
       });
     }
@@ -63,21 +75,22 @@ const getPlaylistList = async (req, res) => {
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
-        .select("name description createdBy createdByAdmin isActive createdAt")
+        .select("name description banner createdBy createdByAdmin isActive createdAt")
         .lean(),
       Playlist.countDocuments(filter),
     ]);
 
-    const list = playlists.map((p) => ({
+    const list = await Promise.all(playlists.map(async (p) => ({
       _id: p._id.toString(),
       name: p.name || "",
       description: (p.description || "").slice(0, 120),
+      banner: await signKey(p.banner?.key),
       teacherName: p.createdBy?.name ?? p.createdByAdmin?.name ?? "Admin",
       teacherEmail: p.createdBy?.email ?? p.createdByAdmin?.email ?? "—",
       ownerType: p.createdBy ? "teacher" : "admin",
       isActive: !!p.isActive,
       createdAt: p.createdAt,
-    }));
+    })));
 
     res.status(200).json({
       success: true,
@@ -116,7 +129,7 @@ const getPlaylistDetail = async (req, res) => {
     const playlist = await Playlist.findById(playlistId)
       .populate("createdBy", "name email")
       .populate("createdByAdmin", "name email")
-      .select("name description createdBy createdByAdmin isActive createdAt")
+      .select("name description banner createdBy createdByAdmin isActive createdAt")
       .lean();
     if (!playlist) {
       return res.status(404).json({ success: false, message: "Playlist not found." });
@@ -124,7 +137,7 @@ const getPlaylistDetail = async (req, res) => {
 
     const [courses, enrollees] = await Promise.all([
       Course.find({ playlist: playlistId, isActive: true })
-        .select("title duration createdAt")
+        .select("title description duration video thumbnail createdAt")
         .sort({ createdAt: 1 })
         .lean(),
       PlaylistEnrollment.find({ playlist: playlistId })
@@ -132,18 +145,22 @@ const getPlaylistDetail = async (req, res) => {
         .lean(),
     ]);
 
-    const courseList = courses.map((c) => ({
+    const courseList = await Promise.all(courses.map(async (c) => ({
       _id: c._id.toString(),
       title: c.title || "",
+      description: c.description || "",
       duration: c.duration || 0,
+      thumbnail: await signKey(c.thumbnail?.key),
+      videoUrl: await signKey(c.video?.key),
       createdAt: c.createdAt,
-    }));
+    })));
 
     const enrolleeList = enrollees.map((e) => ({
       _id: e._id.toString(),
       studentId: e.student?._id?.toString(),
       studentName: e.student?.name ?? "—",
       studentEmail: e.student?.email ?? "—",
+      enrolledAt: e.createdAt,
     }));
 
     res.status(200).json({
@@ -153,6 +170,8 @@ const getPlaylistDetail = async (req, res) => {
           _id: playlist._id.toString(),
           name: playlist.name,
           description: playlist.description || "",
+          banner: await signKey(playlist.banner?.key),
+          teacherId: playlist.createdBy?._id?.toString() ?? null,
           teacherName: playlist.createdBy?.name ?? playlist.createdByAdmin?.name ?? "Admin",
           teacherEmail: playlist.createdBy?.email ?? playlist.createdByAdmin?.email ?? "—",
           ownerType: playlist.createdBy ? "teacher" : "admin",
@@ -281,7 +300,7 @@ const createPlaylist = async (req, res) => {
         });
       }
       const existing = await Playlist.findOne({
-        name: { $regex: new RegExp(`^${name.trim()}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(name.trim())}$`, "i") },
         createdBy: teacherId,
       });
       if (existing) {
@@ -294,7 +313,7 @@ const createPlaylist = async (req, res) => {
       playlistData.createdByAdmin = null;
     } else {
       const existing = await Playlist.findOne({
-        name: { $regex: new RegExp(`^${name.trim()}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(name.trim())}$`, "i") },
         createdByAdmin: adminId,
       });
       if (existing) {

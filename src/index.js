@@ -45,14 +45,14 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 // ─── Swagger Docs ───
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customCss: ".swagger-ui .topbar { display: none }",
-  customSiteTitle: "EduSpark API Docs",
+  customSiteTitle: "Sparks API Docs",
 }));
 
 // ─── Health Check Route ───
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    message: "🚀 EduSpark Backend API is running!",
+    message: "🚀 Sparks Backend API is running!",
     version: "1.0.0",
     environment: process.env.NODE_ENV,
   });
@@ -99,7 +99,7 @@ app.use((err, req, res, next) => {
 
 // ─── Start Server ───
 server.listen(PORT,"0.0.0.0", () => {
-  console.log(`\n🚀 EduSpark Server running on port ${PORT}`);
+  console.log(`\n🚀 Sparks Server running on port ${PORT}`);
   console.log(`📍 http://localhost:${PORT}`);
   console.log(`🔌 Socket.IO: ws on same port`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);

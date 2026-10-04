@@ -6,6 +6,7 @@
 
 const Category = require("../models/category.model");
 const Teacher = require("../models/teacher.model");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -24,7 +25,7 @@ const getCategoryList = async (req, res) => {
 
     const filter = {};
     if (search) {
-      filter.name = { $regex: search, $options: "i" };
+      filter.name = { $regex: escapeRegex(search), $options: "i" };
     }
     if (req.query.teacherId === "__admin__") {
       filter.createdByAdmin = req.user?.id;
@@ -97,7 +98,7 @@ const createCategory = async (req, res) => {
         });
       }
       const existing = await Category.findOne({
-        name: { $regex: new RegExp(`^${nameTrimmed}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(nameTrimmed)}$`, "i") },
         createdBy: teacherId,
       });
       if (existing) {
@@ -110,7 +111,7 @@ const createCategory = async (req, res) => {
       categoryData.createdByAdmin = null;
     } else {
       const existing = await Category.findOne({
-        name: { $regex: new RegExp(`^${nameTrimmed}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(nameTrimmed)}$`, "i") },
         createdByAdmin: adminId,
       });
       if (existing) {

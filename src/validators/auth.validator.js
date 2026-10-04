@@ -9,6 +9,13 @@ const sendOTPValidator = [
     .isEmail()
     .withMessage("Please enter a valid email address")
     .normalizeEmail(),
+
+  // Optional: lets the server reject a taken number before sending the OTP.
+  body("phone")
+    .optional({ values: "falsy" })
+    .trim()
+    .matches(/^\d{10}$/)
+    .withMessage("Phone must be a valid 10-digit number"),
 ];
 
 // ─── Verify OTP & Register Validator ───

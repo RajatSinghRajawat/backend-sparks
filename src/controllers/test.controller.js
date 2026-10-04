@@ -1,6 +1,7 @@
 const Test = require("../models/test.model");
 const { generateUploadUrl, deleteFromS3 } = require("../helpers/fileHelper");
 const { getS3Url, getPresignedViewUrl } = require("../config/s3");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const parseAndLogStartTime = (startTime, label, meta = {}) => {
   const parsedStartTime = new Date(startTime);
@@ -145,8 +146,8 @@ const getMyTests = async (req, res) => {
     const filter = { createdBy: teacherId };
     if (search) {
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -386,10 +387,12 @@ const announceToTestSubscribers = async (req, res) => {
 // GET /api/students/tests/:id
 const getTestByIdForStudent = async (req, res) => {
   try {
+    // Never send answers to students — the quiz is graded server-side.
     const test = await Test.findOne({
       _id: req.params.id,
       isActive: true,
     })
+      .select("-questions.correctAnswer")
       .populate("createdBy", "name")
       .lean();
 
@@ -458,6 +461,7 @@ const getStudentTestList = async (req, res) => {
 
     const [tests, total] = await Promise.all([
       Test.find(filter)
+        .select("-questions.correctAnswer")
         .populate("createdBy", "name")
         .sort(sort)
         .skip(skip)

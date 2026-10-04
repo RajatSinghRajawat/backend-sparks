@@ -4,12 +4,12 @@ const swaggerOptions = {
   definition: {
     openapi: "3.0.0",
     info: {
-      title: "EduSpark Teacher Panel API",
+      title: "Sparks Teacher Panel API",
       version: "1.0.0",
       description:
-        "REST API documentation for EduSpark Teacher Panel Backend",
+        "REST API documentation for Sparks Teacher Panel Backend",
       contact: {
-        name: "EduSpark Team",
+        name: "Sparks Team",
       },
     },
     servers: [

@@ -83,4 +83,19 @@ const getPresignedViewUrl = async (key, expiresIn = 3600) => {
   return signedUrl;
 };
 
-module.exports = { getS3Client, getS3Bucket, getS3Url, getKeyFromS3Url, getPresignedUploadUrl, getPresignedViewUrl };
+/**
+ * Avatars are stored as plain S3 URLs, but the bucket is private, so those
+ * URLs return 403. Sign them on the way out; non-S3 URLs pass through.
+ */
+const signStoredUrl = async (url, expiresIn = 3600) => {
+  if (!url) return null;
+  const key = getKeyFromS3Url(url);
+  if (!key) return url;
+  try {
+    return await getPresignedViewUrl(key, expiresIn);
+  } catch {
+    return url;
+  }
+};
+
+module.exports = { getS3Client, getS3Bucket, getS3Url, getKeyFromS3Url, getPresignedUploadUrl, getPresignedViewUrl, signStoredUrl };

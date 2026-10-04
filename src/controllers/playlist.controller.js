@@ -3,13 +3,17 @@ const Course = require("../models/course.model");
 const PlaylistEnrollment = require("../models/playlistEnrollment.model");
 const CourseRating = require("../models/courseRating.model");
 const { generateUploadUrl, deleteFromS3 } = require("../helpers/fileHelper");
-const { getS3Url, getPresignedViewUrl } = require("../config/s3");
+const { getS3Url, getPresignedViewUrl, signStoredUrl } = require("../config/s3");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 // ─── Helper: Add presigned view URL to banner ───
 const addPresignedBannerUrl = async (playlist) => {
   const obj = playlist.toJSON ? playlist.toJSON() : { ...playlist };
   if (obj.banner && obj.banner.key) {
     obj.banner.url = await getPresignedViewUrl(obj.banner.key);
+  }
+  if (obj.createdBy && obj.createdBy.avatar) {
+    obj.createdBy = { ...obj.createdBy, avatar: await signStoredUrl(obj.createdBy.avatar) };
   }
   return obj;
 };
@@ -72,7 +76,7 @@ const createPlaylist = async (req, res) => {
 
     // Check for duplicate name (case-insensitive)
     const existing = await Playlist.findOne({
-      name: { $regex: new RegExp(`^${name}$`, "i") },
+      name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") },
       createdBy: teacherId,
     });
 
@@ -149,8 +153,8 @@ const getMyPlaylists = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -216,8 +220,8 @@ const getPlaylistsForStudents = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { name: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -449,7 +453,7 @@ const updatePlaylist = async (req, res) => {
     // Check duplicate name if name is being changed
     if (name && name.toLowerCase() !== playlist.name.toLowerCase()) {
       const duplicate = await Playlist.findOne({
-        name: { $regex: new RegExp(`^${name}$`, "i") },
+        name: { $regex: new RegExp(`^${escapeRegex(name)}$`, "i") },
         createdBy: teacherId,
         _id: { $ne: req.params.id },
       });
@@ -528,6 +532,23 @@ const deletePlaylist = async (req, res) => {
     if (playlist.banner && playlist.banner.key) {
       await deleteFromS3(playlist.banner.key);
     }
+
+    // Courses only exist inside a playlist, so they go with it — otherwise
+    // they linger in the teacher's Course tab with no way for students to
+    // reach them, and their S3 files are orphaned.
+    const courses = await Course.find({ playlist: playlist._id }).select("_id video thumbnail").lean();
+    await Promise.all(
+      courses.flatMap((c) => [
+        c.video?.key ? deleteFromS3(c.video.key).catch(() => {}) : null,
+        c.thumbnail?.key ? deleteFromS3(c.thumbnail.key).catch(() => {}) : null,
+      ])
+    );
+    const courseIds = courses.map((c) => c._id);
+    await Promise.all([
+      Course.deleteMany({ _id: { $in: courseIds } }),
+      CourseRating.deleteMany({ course: { $in: courseIds } }),
+      PlaylistEnrollment.deleteMany({ playlist: playlist._id }),
+    ]);
 
     await Playlist.deleteOne({ _id: playlist._id });
 

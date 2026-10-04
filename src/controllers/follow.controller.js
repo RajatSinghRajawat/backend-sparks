@@ -1,5 +1,6 @@
 const Teacher = require("../models/teacher.model");
 const Follow = require("../models/follow.model");
+const { signStoredUrl } = require("../config/s3");
 
 // ─────────────────────────────────────────────
 // @desc    Toggle follow (student follows / unfollows teacher)
@@ -127,16 +128,16 @@ const getMyFollowingList = async (req, res) => {
       Follow.countDocuments({ followedBy: studentId }),
     ]);
 
-    const teachers = docs.map((d) => {
+    const teachers = (await Promise.all(docs.map(async (d) => {
       const t = d.teacher;
       if (!t) return null;
       return {
         _id: t._id,
         name: t.name,
         email: t.email,
-        avatar: t.avatar || null,
+        avatar: await signStoredUrl(t.avatar),
       };
-    }).filter(Boolean);
+    }))).filter(Boolean);
 
     res.status(200).json({
       success: true,

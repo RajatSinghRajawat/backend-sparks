@@ -1,7 +1,7 @@
 const Teacher = require("../models/teacher.model");
 const OTP = require("../models/otp.model");
 const { generateUploadUrl } = require("../helpers/fileHelper");
-const { getS3Url } = require("../config/s3");
+const { getS3Url, signStoredUrl } = require("../config/s3");
 const Follow = require("../models/follow.model");
 const Reel = require("../models/reel.model");
 const ReelView = require("../models/reelView.model");
@@ -12,6 +12,31 @@ const { generateOTP } = require("../utils/otp.utils");
 const { sendOTPEmail } = require("../services/email.service");
 const jwt = require("jsonwebtoken");
 
+// ─── Helper: is this email / phone already taken? ───
+// Admin "Deactivate" keeps the account (and its unique email/phone), so say
+// so explicitly — a bare "already registered" looked like a bug when the
+// teacher had switched to a new email but kept the old number.
+const findRegistrationConflict = async ({ email, phone }) => {
+  if (email) {
+    const byEmail = await Teacher.findOne({ email }).select("isActive").lean();
+    if (byEmail) {
+      return byEmail.isActive === false
+        ? "This email belongs to a deactivated teacher account. Contact support to reactivate it, or use a different email."
+        : "A teacher with this email is already registered";
+    }
+  }
+  // Guard: findOne({ phone: undefined }) would match any teacher.
+  if (phone) {
+    const byPhone = await Teacher.findOne({ phone }).select("isActive").lean();
+    if (byPhone) {
+      return byPhone.isActive === false
+        ? "This phone number belongs to a deactivated teacher account. Contact support to reactivate it, or use a different number."
+        : "A teacher with this phone number is already registered";
+    }
+  }
+  return null;
+};
+
 // ─────────────────────────────────────────────
 // @desc    Send OTP to teacher's email
 // @route   POST /api/auth/send-otp
@@ -19,15 +44,13 @@ const jwt = require("jsonwebtoken");
 // ─────────────────────────────────────────────
 const sendOTP = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, phone } = req.body;
 
-    // Check if teacher already exists
-    const existingTeacher = await Teacher.findOne({ email });
-    if (existingTeacher) {
-      return res.status(409).json({
-        success: false,
-        message: "A teacher with this email is already registered",
-      });
+    // Check email and (when sent) phone before mailing an OTP — otherwise a
+    // taken phone only failed after the teacher had entered the code.
+    const conflict = await findRegistrationConflict({ email, phone });
+    if (conflict) {
+      return res.status(409).json({ success: false, message: conflict });
     }
 
     // Delete any existing OTPs for this email (prevent multiple active OTPs)
@@ -75,22 +98,9 @@ const verifyOTPAndRegister = async (req, res) => {
   try {
     const { email, otp, name, phone, password } = req.body;
 
-    // Check if teacher already exists with this email
-    const existingTeacher = await Teacher.findOne({ email });
-    if (existingTeacher) {
-      return res.status(409).json({
-        success: false,
-        message: "A teacher with this email is already registered",
-      });
-    }
-
-    // Check if phone number already exists
-    const existingPhone = await Teacher.findOne({ phone });
-    if (existingPhone) {
-      return res.status(409).json({
-        success: false,
-        message: "A teacher with this phone number is already registered",
-      });
+    const conflict = await findRegistrationConflict({ email, phone });
+    if (conflict) {
+      return res.status(409).json({ success: false, message: conflict });
     }
 
     // Find OTP record
@@ -148,7 +158,7 @@ const verifyOTPAndRegister = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Registration successful! Welcome to EduSpark 🎉",
+      message: "Registration successful! Welcome to Sparks 🎉",
       data: {
         teacher: {
           _id: teacher._id,
@@ -290,7 +300,7 @@ const login = async (req, res) => {
           name: teacher.name,
           email: teacher.email,
           phone: teacher.phone,
-          avatar: teacher.avatar,
+          avatar: await signStoredUrl(teacher.avatar),
           isVerified: teacher.isVerified,
           createdAt: teacher.createdAt,
         },
@@ -347,6 +357,7 @@ const getMe = async (req, res) => {
 
     const teacherProfile = {
       ...teacher,
+      avatar: await signStoredUrl(teacher.avatar),
       totalCourses,
       totalEnrolledStudents,
       totalFollowers,
@@ -432,6 +443,7 @@ const updateProfile = async (req, res) => {
     const updated = await Teacher.findById(teacherId)
       .select("name email phone avatar isVerified createdAt")
       .lean();
+    if (updated) updated.avatar = await signStoredUrl(updated.avatar);
 
     res.status(200).json({
       success: true,

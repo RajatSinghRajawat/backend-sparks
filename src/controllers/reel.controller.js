@@ -8,6 +8,7 @@ const Follow = require("../models/follow.model");
 const Category = require("../models/category.model");
 const { generateUploadUrl, deleteFromS3 } = require("../helpers/fileHelper");
 const { getS3Client, getS3Bucket, getS3Url, getPresignedViewUrl } = require("../config/s3");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const MIME_TO_EXT = {
   "video/mp4": ".mp4",
@@ -295,9 +296,9 @@ const getMyReels = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-        { hashtags: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
+        { hashtags: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -370,9 +371,9 @@ const getReelsForStudents = async (req, res) => {
 
     if (search && search.trim()) {
       filter.$or = [
-        { title: { $regex: search.trim(), $options: "i" } },
-        { description: { $regex: search.trim(), $options: "i" } },
-        { hashtags: { $regex: search.trim(), $options: "i" } },
+        { title: { $regex: escapeRegex(search.trim()), $options: "i" } },
+        { description: { $regex: escapeRegex(search.trim()), $options: "i" } },
+        { hashtags: { $regex: escapeRegex(search.trim()), $options: "i" } },
       ];
     }
 

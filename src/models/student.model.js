@@ -57,8 +57,16 @@ const studentSchema = new mongoose.Schema(
   }
 );
 
-// Unique phone when set (multiple nulls allowed)
-studentSchema.index({ phone: 1 }, { unique: true, sparse: true });
+// Unique phone when set.
+// `sparse` only skips documents where the field is ABSENT — but `phone` has
+// `default: null`, so every student carries phone: null and gets indexed.
+// Under a unique index that lets exactly one phone-less student exist and
+// fails every later signup with a duplicate-key error. A partial index keyed
+// on the type actually skips the nulls.
+studentSchema.index(
+  { phone: 1 },
+  { unique: true, partialFilterExpression: { phone: { $type: "string" } } }
+);
 
 // ─── Hash password before saving ───
 studentSchema.pre("save", async function () {

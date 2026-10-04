@@ -1,6 +1,7 @@
 const Video = require("../models/video.model");
 const { generateUploadUrl, deleteFromS3 } = require("../helpers/fileHelper");
 const { getS3Url, getPresignedViewUrl } = require("../config/s3");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const addPresignedUrls = async (video) => {
   const obj = video.toJSON ? video.toJSON() : { ...video };
@@ -121,8 +122,8 @@ const getMyVideos = async (req, res) => {
     const filter = { createdBy: teacherId };
     if (search) {
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 

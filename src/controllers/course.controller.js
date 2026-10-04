@@ -4,6 +4,8 @@ const PlaylistEnrollment = require("../models/playlistEnrollment.model");
 const CourseRating = require("../models/courseRating.model");
 const { generateUploadUrl, deleteFromS3 } = require("../helpers/fileHelper");
 const { getS3Url, getPresignedViewUrl } = require("../config/s3");
+const { escapeRegex } = require("../utils/escapeRegex");
+const { hideLockedVideoUrls } = require("../utils/courseAccess");
 
 // ─── Helper: Add presigned view URLs to a course ───
 const addPresignedUrls = async (course) => {
@@ -185,8 +187,8 @@ const getMyCourses = async (req, res) => {
 
     if (search) {
       filter.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
+        { title: { $regex: escapeRegex(search), $options: "i" } },
+        { description: { $regex: escapeRegex(search), $options: "i" } },
       ];
     }
 
@@ -272,7 +274,10 @@ const getCoursesByPlaylistForStudent = async (req, res) => {
       ratingByCourse[r.course.toString()] = r.rating;
     });
 
-    const coursesWithUrls = await addPresignedUrlsToCourses(courses);
+    const coursesWithUrls = await hideLockedVideoUrls(
+      await addPresignedUrlsToCourses(courses),
+      studentId
+    );
     const coursesWithMyRating = coursesWithUrls.map((c) => ({
       ...c,
       myRating: ratingByCourse[c._id.toString()] ?? null,

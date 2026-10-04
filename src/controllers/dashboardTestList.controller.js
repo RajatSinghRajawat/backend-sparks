@@ -5,6 +5,7 @@
  */
 
 const Test = require("../models/test.model");
+const { escapeRegex } = require("../utils/escapeRegex");
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -39,8 +40,8 @@ const getTestList = async (req, res) => {
       filter.$and = filter.$and || [];
       filter.$and.push({
         $or: [
-          { title: { $regex: search, $options: "i" } },
-          { description: { $regex: search, $options: "i" } },
+          { title: { $regex: escapeRegex(search), $options: "i" } },
+          { description: { $regex: escapeRegex(search), $options: "i" } },
         ],
       });
     }
